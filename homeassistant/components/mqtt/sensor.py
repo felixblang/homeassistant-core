@@ -11,14 +11,12 @@ import voluptuous as vol
 from homeassistant.components import sensor
 from homeassistant.components.sensor import (
     CONF_STATE_CLASS,
-    DEVICE_CLASS_UNITS,
     DEVICE_CLASSES_SCHEMA,
     ENTITY_ID_FORMAT,
     STATE_CLASSES_SCHEMA,
     RestoreSensor,
     SensorDeviceClass,
     SensorExtraStoredData,
-    SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
@@ -40,19 +38,22 @@ from homeassistant.util import dt as dt_util
 
 from . import subscription
 from .config import MQTT_RO_SCHEMA
-from .const import CONF_OPTIONS, CONF_STATE_TOPIC, PAYLOAD_NONE
+from .const import (
+    CONF_EXPIRE_AFTER,
+    CONF_LAST_RESET_VALUE_TEMPLATE,
+    CONF_OPTIONS,
+    CONF_STATE_TOPIC,
+    CONF_SUGGESTED_DISPLAY_PRECISION,
+    PAYLOAD_NONE,
+)
 from .entity import MqttAvailabilityMixin, MqttEntity, async_setup_entity_entry_helper
 from .models import MqttValueTemplate, PayloadSentinel, ReceiveMessage
 from .schemas import MQTT_ENTITY_COMMON_SCHEMA
-from .util import check_state_too_long
+from .util import check_state_too_long, validate_sensor_state_and_device_class_config
 
 _LOGGER = logging.getLogger(__name__)
 
 PARALLEL_UPDATES = 0
-
-CONF_EXPIRE_AFTER = "expire_after"
-CONF_LAST_RESET_VALUE_TEMPLATE = "last_reset_value_template"
-CONF_SUGGESTED_DISPLAY_PRECISION = "suggested_display_precision"
 
 MQTT_SENSOR_ATTRIBUTES_BLOCKED = frozenset(
     {
@@ -77,52 +78,6 @@ _PLATFORM_SCHEMA_BASE = MQTT_RO_SCHEMA.extend(
         vol.Optional(CONF_UNIT_OF_MEASUREMENT): vol.Any(cv.string, None),
     }
 ).extend(MQTT_ENTITY_COMMON_SCHEMA.schema)
-
-
-def validate_sensor_state_and_device_class_config(config: ConfigType) -> ConfigType:
-    """Validate the sensor options, state and device class config."""
-    if (
-        CONF_LAST_RESET_VALUE_TEMPLATE in config
-        and (state_class := config.get(CONF_STATE_CLASS)) != SensorStateClass.TOTAL
-    ):
-        raise vol.Invalid(
-            f"The option `{CONF_LAST_RESET_VALUE_TEMPLATE}` cannot be used "
-            f"together with state class `{state_class}`"
-        )
-
-    # Only allow `options` to be set for `enum` sensors
-    # to limit the possible sensor values
-    if (options := config.get(CONF_OPTIONS)) is not None:
-        if not options:
-            raise vol.Invalid("An empty options list is not allowed")
-        if config.get(CONF_STATE_CLASS) or config.get(CONF_UNIT_OF_MEASUREMENT):
-            raise vol.Invalid(
-                f"Specifying `{CONF_OPTIONS}` is not allowed together with "
-                f"the `{CONF_STATE_CLASS}` or `{CONF_UNIT_OF_MEASUREMENT}` option"
-            )
-
-        if (device_class := config.get(CONF_DEVICE_CLASS)) != SensorDeviceClass.ENUM:
-            raise vol.Invalid(
-                f"The option `{CONF_OPTIONS}` must be used "
-                f"together with device class `{SensorDeviceClass.ENUM}`, "
-                f"got `{CONF_DEVICE_CLASS}` '{device_class}'"
-            )
-
-    if (device_class := config.get(CONF_DEVICE_CLASS)) is None or (
-        unit_of_measurement := config.get(CONF_UNIT_OF_MEASUREMENT)
-    ) is None:
-        return config
-
-    if (
-        device_class in DEVICE_CLASS_UNITS
-        and unit_of_measurement not in DEVICE_CLASS_UNITS[device_class]
-    ):
-        raise vol.Invalid(
-            f"The unit of measurement `{unit_of_measurement}` is not valid "
-            f"together with device class `{device_class}`"
-        )
-
-    return config
 
 
 PLATFORM_SCHEMA_MODERN = vol.All(
